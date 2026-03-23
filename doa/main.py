@@ -337,7 +337,7 @@ def build_market_analysis_graph(config: EngineConfig) -> StateGraph:
     # Consensus engine node
     workflow.add_node(
         "consensus_engine",
-        create_consensus_engine_node(config)
+        create_consensus_engine_node(config, supabase_client if config.database.enable_persistence else None)
     )
     
     # Recommendation generation node

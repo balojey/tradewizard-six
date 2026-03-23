@@ -4,12 +4,49 @@
  * This module implements the consensus calculation stage of the debate protocol.
  * It calculates a weighted consensus probability from debate scores and agent signals,
  * computes confidence bands based on disagreement, and classifies probability regimes.
+ *
+ * Agent signals are weighted by confidence × leaderboard accuracy (agent_signal_accuracy_pct
+ * from v_performance_by_agent), giving historically accurate agents more influence.
  */
 
 import type { GraphStateType } from '../models/state.js';
 import type { ConsensusProbability, ProbabilityRegime } from '../models/types.js';
 import type { EngineConfig } from '../config/index.js';
+import type { SupabaseClientManager } from '../database/supabase-client.js';
 import { formatTimestamp } from '../utils/timestamp-formatter.js';
+
+/**
+ * Fetch per-agent signal accuracy percentages from the leaderboard view.
+ *
+ * Queries v_performance_by_agent and returns agentName -> accuracy (0-100).
+ * Returns an empty map on any failure so consensus can degrade gracefully.
+ */
+async function fetchAgentAccuracies(
+  supabaseManager: SupabaseClientManager
+): Promise<Map<string, number>> {
+  try {
+    const client = supabaseManager.getClient();
+    const { data, error } = await client
+      .from('v_performance_by_agent')
+      .select('agent_name, agent_signal_accuracy_pct');
+
+    if (error) {
+      console.warn('[ConsensusEngine] Could not fetch leaderboard accuracies:', error.message);
+      return new Map();
+    }
+
+    const map = new Map<string, number>();
+    for (const row of data ?? []) {
+      if (row.agent_name && row.agent_signal_accuracy_pct != null) {
+        map.set(row.agent_name, Number(row.agent_signal_accuracy_pct));
+      }
+    }
+    return map;
+  } catch (err) {
+    console.warn('[ConsensusEngine] Could not fetch leaderboard accuracies:', err);
+    return new Map();
+  }
+}
 
 /**
  * Format agent signals with human-readable timestamps for consensus context
@@ -53,6 +90,31 @@ function calculateStandardDeviation(probabilities: number[]): number {
     probabilities.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / probabilities.length;
 
   return Math.sqrt(variance);
+}
+
+/**
+ * Calculate per-signal weights using confidence × leaderboard accuracy.
+ *
+ * accuracy_multiplier = agent_signal_accuracy_pct / 50
+ * (50% = neutral 1.0x, 100% = 2.0x, 0% = 0.0x)
+ * Falls back to 1.0x when no leaderboard data exists for an agent.
+ * Returns normalized weights that sum to 1.
+ */
+function calculateSignalWeights(
+  signals: GraphStateType['agentSignals'],
+  leaderboardAccuracies: Map<string, number>
+): number[] {
+  if (!signals || signals.length === 0) return [];
+
+  const raw = signals.map((signal) => {
+    const accuracyPct = leaderboardAccuracies.get(signal.agentName);
+    const accuracyMultiplier = accuracyPct != null ? accuracyPct / 50 : 1.0;
+    return signal.confidence * accuracyMultiplier;
+  });
+
+  const total = raw.reduce((sum, w) => sum + w, 0);
+  if (total === 0) return raw.map(() => 1 / signals.length);
+  return raw.map((w) => w / total);
 }
 
 /**
@@ -160,13 +222,13 @@ function isEfficientlyPriced(
 /**
  * Create consensus engine node factory
  *
- * This factory function creates a consensus engine node with the configured parameters.
- *
  * @param config - Engine configuration
+ * @param supabaseManager - Optional Supabase client for fetching leaderboard accuracies
  * @returns Consensus engine node function
  */
 export function createConsensusEngineNode(
-  config: EngineConfig
+  config: EngineConfig,
+  supabaseManager?: SupabaseClientManager
 ): (state: GraphStateType) => Promise<Partial<GraphStateType>> {
   return async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
     const startTime = Date.now();
@@ -261,10 +323,22 @@ export function createConsensusEngineNode(
     }
 
     try {
+      // Fetch leaderboard accuracies (graceful fallback to empty map)
+      const leaderboardAccuracies = supabaseManager
+        ? await fetchAgentAccuracies(supabaseManager)
+        : new Map<string, number>();
+
+      console.log(
+        `[ConsensusEngine] Leaderboard accuracies loaded for ${leaderboardAccuracies.size} agents`
+      );
+
       // Log formatted signal context for debugging and audit trail
       const signalContext = formatSignalsForConsensusContext(state.agentSignals);
       console.log('[ConsensusEngine] Signal context:\n', signalContext);
-      
+
+      // Calculate per-signal weights from confidence × leaderboard accuracy
+      const signalWeights = calculateSignalWeights(state.agentSignals, leaderboardAccuracies);
+
       // Calculate weighted consensus probability from debate scores
       const consensusProbability = calculateWeightedConsensus(
         state.bullThesis.fairProbability,
@@ -314,8 +388,11 @@ export function createConsensusEngineNode(
       // Classify probability regime
       const regime = classifyProbabilityRegime(disagreementIndex);
 
-      // Get contributing agent names
-      const contributingSignals = state.agentSignals.map((signal) => signal.agentName);
+      // Order contributing agents by their weight (highest influence first)
+      const contributingSignals = [...state.agentSignals]
+        .map((signal, i) => ({ name: signal.agentName, weight: signalWeights[i] ?? 0 }))
+        .sort((a, b) => b.weight - a.weight)
+        .map((s) => s.name);
 
       // Create consensus probability object
       const consensus: ConsensusProbability = {
@@ -350,6 +427,7 @@ export function createConsensusEngineNode(
               regime,
               confidenceBand,
               contributingAgents: contributingSignals.length,
+              leaderboardAgentsLoaded: leaderboardAccuracies.size,
               duration: endTime - startTime,
               completedAt: endTimeFormatted.formatted,
               signalSummary: signalContext,
@@ -390,7 +468,7 @@ export function createConsensusEngineNode(
  * Default consensus engine node
  *
  * This is a convenience export that uses the default configuration.
- * For production use, create a node with createConsensusEngineNode(config).
+ * For production use, create a node with createConsensusEngineNode(config, supabaseManager).
  */
-export const consensusEngineNode = (config: EngineConfig) =>
-  createConsensusEngineNode(config);
+export const consensusEngineNode = (config: EngineConfig, supabaseManager?: SupabaseClientManager) =>
+  createConsensusEngineNode(config, supabaseManager);

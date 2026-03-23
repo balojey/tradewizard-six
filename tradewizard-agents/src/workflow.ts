@@ -125,7 +125,7 @@ export async function createWorkflow(
   
   const thesisConstruction = createThesisConstructionNode(config);
   const crossExamination = createCrossExaminationNode(config);
-  const consensusEngine = createConsensusEngineNode(config);
+  const consensusEngine = createConsensusEngineNode(config, supabaseManager);
   const recommendationGeneration = createRecommendationGenerationNode(config);
 
   // Create advanced agent nodes
@@ -156,10 +156,11 @@ export async function createWorkflow(
   }
   const marketMicrostructureAgentNode = createAutonomousMarketMicrostructureAgentNode(config);
   
-  // Create Web Research Agent (conditionally enabled)
-  const webResearchAgent = config.webResearch?.enabled !== false 
+  // Create Web Research Agent (always created, but may be a passthrough if disabled)
+  const webResearchEnabled = config.webResearch?.enabled !== false;
+  const webResearchAgent = webResearchEnabled
     ? createWebResearchAgentNode(config)
-    : null;
+    : async (state: GraphStateType) => state; // passthrough no-op
   
   const historicalPatternAgent = createHistoricalPatternAgentNode(config);
   const socialSentimentAgent = createSocialSentimentAgentNode(config);
@@ -175,14 +176,8 @@ export async function createWorkflow(
   const workflow = new StateGraph(GraphState)
     // Add all nodes to the graph
     .addNode('market_ingestion', marketIngestion)
-    .addNode('memory_retrieval', memoryRetrieval);
-  
-  // Add Web Research Agent node (conditionally)
-  if (webResearchAgent) {
-    workflow.addNode('web_research', webResearchAgent);
-  }
-  
-  workflow
+    .addNode('memory_retrieval', memoryRetrieval)
+    .addNode('web_research', webResearchAgent)
     .addNode('keyword_extraction', keywordExtraction)
     .addNode('dynamic_agent_selection', dynamicAgentSelection)
     
@@ -248,7 +243,7 @@ export async function createWorkflow(
     )
 
     // Add edge from memory retrieval to web research or keyword extraction
-    if (webResearchAgent) {
+    if (webResearchEnabled) {
       workflow.addEdge('memory_retrieval', 'web_research');
       workflow.addEdge('web_research', 'keyword_extraction');
     } else {

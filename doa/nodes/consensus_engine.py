@@ -17,56 +17,90 @@ from config import EngineConfig
 logger = logging.getLogger(__name__)
 
 
+async def fetch_agent_accuracies(supabase_client: Any) -> Dict[str, float]:
+    """
+    Fetch agent signal accuracy percentages from the leaderboard view.
+
+    Queries v_performance_by_agent and returns a mapping of agent_name ->
+    agent_signal_accuracy_pct (0-100 scale). Returns an empty dict on any
+    failure so the caller can fall back gracefully.
+
+    Args:
+        supabase_client: SupabaseClient instance
+
+    Returns:
+        Dict mapping agent_name to accuracy percentage (0-100)
+    """
+    try:
+        response = (
+            supabase_client.client
+            .from_("v_performance_by_agent")
+            .select("agent_name,agent_signal_accuracy_pct")
+            .execute()
+        )
+        if response.data:
+            return {
+                row["agent_name"]: float(row["agent_signal_accuracy_pct"])
+                for row in response.data
+                if row.get("agent_name") and row.get("agent_signal_accuracy_pct") is not None
+            }
+    except Exception as e:
+        logger.warning(f"Could not fetch agent accuracies from leaderboard: {e}")
+    return {}
+
+
 def calculate_signal_weights(
     signals: List[AgentSignal],
-    config: EngineConfig
+    config: EngineConfig,
+    leaderboard_accuracies: Optional[Dict[str, float]] = None
 ) -> List[float]:
     """
-    Calculate weights for each agent signal based on confidence and historical accuracy.
-    
+    Calculate weights for each agent signal based on confidence and leaderboard accuracy.
+
     Weighting Strategy:
     1. Base weight = agent confidence (0-1)
-    2. Historical accuracy multiplier:
-       - High accuracy (>70%): 1.2x
-       - Medium accuracy (50-70%): 1.0x
-       - Low accuracy (<50%): 0.8x
+    2. Leaderboard accuracy multiplier (continuous, from v_performance_by_agent):
+       - accuracy_multiplier = agent_signal_accuracy_pct / 50.0
+         (50% accuracy = 1.0x neutral; 100% = 2.0x; 0% = 0.0x)
+       - Falls back to 1.0x when no leaderboard data is available for an agent
     3. Normalize weights to sum to 1.0
-    
+
     Args:
         signals: List of agent signals
         config: Engine configuration
-        
+        leaderboard_accuracies: Dict of agent_name -> accuracy pct (0-100) from
+            v_performance_by_agent. When None or missing an agent, falls back to 1.0x.
+
     Returns:
         List of normalized weights (sum to 1.0)
     """
     if not signals:
         return []
-    
+
+    accuracies = leaderboard_accuracies or {}
     weights = []
-    
+
     for signal in signals:
-        # Base weight from confidence
+        # Base weight from self-reported confidence
         weight = signal.confidence
-        
-        # Apply historical accuracy multiplier if available
-        historical_accuracy = signal.metadata.get('historical_accuracy')
-        if historical_accuracy is not None:
-            if historical_accuracy > 0.70:
-                weight *= 1.2
-            elif historical_accuracy < 0.50:
-                weight *= 0.8
-            # else: 1.0x (no change)
-        
+
+        # Apply continuous accuracy multiplier from the leaderboard
+        # 50 % accuracy is the neutral point (1.0x); scale linearly from there.
+        accuracy_pct = accuracies.get(signal.agent_name)
+        if accuracy_pct is not None:
+            accuracy_multiplier = accuracy_pct / 50.0
+            weight *= accuracy_multiplier
+        # else: no historical data yet — keep weight as-is (1.0x implicit)
+
         weights.append(weight)
-    
+
     # Normalize weights to sum to 1.0
     total_weight = sum(weights)
     if total_weight == 0:
-        # All zero confidence - use equal weighting
+        # All zero weights — use equal weighting
         return [1.0 / len(weights)] * len(weights)
-    
-    normalized_weights = [w / total_weight for w in weights]
-    return normalized_weights
+
+    return [w / total_weight for w in weights]
 
 
 def calculate_weighted_consensus(
@@ -248,24 +282,27 @@ def get_contributing_signals(
 
 async def consensus_engine_node(
     state: GraphState,
-    config: EngineConfig
+    config: EngineConfig,
+    supabase_client: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Calculate consensus probability from agent signals and debate results.
     
     This node:
-    1. Weights agent signals by confidence and historical accuracy
-    2. Calculates weighted consensus probability
-    3. Applies debate score adjustment
-    4. Calculates disagreement index from signal variance
-    5. Generates confidence bands based on disagreement
-    6. Classifies probability regime
-    7. Returns ConsensusProbability with all metrics
-    
+    1. Fetches per-agent accuracy from the leaderboard (v_performance_by_agent)
+    2. Weights agent signals by confidence × leaderboard accuracy (continuous scale)
+    3. Calculates weighted consensus probability
+    4. Applies debate score adjustment
+    5. Calculates disagreement index from signal variance
+    6. Generates confidence bands based on disagreement
+    7. Classifies probability regime
+    8. Returns ConsensusProbability with all metrics
+
     Args:
         state: Current workflow state
         config: Engine configuration
-        
+        supabase_client: Optional SupabaseClient for fetching leaderboard accuracies
+
     Returns:
         State update with consensus and audit entry
         
@@ -318,8 +355,18 @@ async def consensus_engine_node(
     logger.info(f"Calculating consensus from {len(agent_signals)} agent signals")
     
     try:
-        # Step 1: Calculate signal weights
-        weights = calculate_signal_weights(agent_signals, config)
+        # Step 1: Fetch leaderboard accuracies and calculate signal weights
+        leaderboard_accuracies = {}
+        if supabase_client is not None:
+            leaderboard_accuracies = await fetch_agent_accuracies(supabase_client)
+            if leaderboard_accuracies:
+                logger.info(
+                    f"Loaded leaderboard accuracies for {len(leaderboard_accuracies)} agents"
+                )
+            else:
+                logger.info("No leaderboard accuracy data available, using confidence-only weights")
+
+        weights = calculate_signal_weights(agent_signals, config, leaderboard_accuracies)
         
         # Step 2: Calculate weighted consensus
         base_consensus = calculate_weighted_consensus(agent_signals, weights)
@@ -380,7 +427,8 @@ async def consensus_engine_node(
                     "contributing_signals": contributing_signals,
                     "avg_confidence": avg_confidence,
                     "probability_std": prob_std,
-                    "debate_applied": debate_record is not None
+                    "debate_applied": debate_record is not None,
+                    "leaderboard_agents_loaded": len(leaderboard_accuracies),
                 }
             )]
         }
@@ -411,17 +459,18 @@ async def consensus_engine_node(
         }
 
 
-def create_consensus_engine_node(config: EngineConfig):
+def create_consensus_engine_node(config: EngineConfig, supabase_client: Optional[Any] = None):
     """
     Factory function to create consensus engine node with dependencies.
-    
+
     Args:
         config: Engine configuration
-        
+        supabase_client: Optional SupabaseClient for fetching leaderboard accuracies
+
     Returns:
         Async function that takes state and returns state update
     """
     async def node(state: GraphState) -> Dict[str, Any]:
-        return await consensus_engine_node(state, config)
-    
+        return await consensus_engine_node(state, config, supabase_client)
+
     return node

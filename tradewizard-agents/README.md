@@ -1,275 +1,65 @@
-# Market Intelligence Engine
+# TradeWizard Agents
 
-> Multi-agent system for prediction market analysis using LangGraph and Opik observability
+> Node.js multi-agent analysis engine for Polymarket prediction markets
 
-## Overview
+Orchestrates 15+ specialized AI agents that analyze markets from multiple perspectives, debate competing theses, and produce explainable trade recommendations with entry/exit zones and risk assessment.
 
-The Market Intelligence Engine transforms prediction market data from Polymarket into explainable, probability-driven trade recommendations. Specialized AI agents independently analyze markets, construct competing theses, challenge each other's assumptions, and reach consensus on fair probability estimates.
+## Components
 
-### Core Principles
+This package does two things:
 
-- **Adversarial Reasoning**: Multiple agents prevent groupthink and expose weak assumptions
-- **Explainability First**: Every recommendation traces back to specific data signals
-- **Graceful Degradation**: Partial failures don't crash the pipeline
+- **Analysis engine** — runs the full LangGraph multi-agent workflow locally via CLI
+- **Monitor service** — background service that discovers and schedules market analyses automatically
 
-### Key Features
+Both can run independently. The monitor can delegate workflow execution to a remote service (like [doa](../doa/README.md)) or run it locally.
 
-- 🤖 Multi-Agent Analysis from different perspectives
-- 🔄 Structured Debate Protocol with bull/bear theses
-- 📊 Probability-Driven consensus with uncertainty quantification
-- 🔍 Full Observability with Opik integration
-- 🎯 Actionable Recommendations with entry/exit zones
-- 🛡️ Robust Error Handling and recovery
-- 🔧 Autonomous Tool-Calling Agents (ReAct pattern)
-- 📰 Real-time News Intelligence with sentiment analysis
-- 📈 Polymarket Tools for cross-market analysis
-- 🧠 Agent Memory System for closed-loop analysis
+## Prerequisites
+
+- Node.js 18+
+- At least one LLM provider API key (OpenAI, Anthropic, Google, or Amazon Nova)
+- Supabase account (free tier works) — required for the monitor service and agent memory
 
 ## Quick Start
 
-### Prerequisites
-
-- Node.js 18+
-- API keys for at least one LLM provider (OpenAI, Anthropic, Google, or Amazon Nova)
-- (Optional) Opik API key for observability
-
-### Setup (5 minutes)
-
 ```bash
-# 1. Install dependencies
 cd tradewizard-agents
 npm install
-
-# 2. Configure environment
 cp .env.example .env
-# Edit .env with your API keys
-
-# 3. Build
+# Add at least one LLM provider key (see Configuration below)
 npm run build
-
-# 4. Run your first analysis
 npm run cli -- analyze <polymarket-condition-id>
 ```
 
-### Example Usage
+### Minimal .env to get started
 
 ```bash
-# Basic analysis
-npm run cli -- analyze 0x1234567890abcdef
-
-# With debug information
-npm run cli -- analyze 0x1234567890abcdef --debug
-
-# Budget-friendly single-provider mode
-npm run cli -- analyze 0x1234567890abcdef --single-provider openai --model gpt-4o-mini
-
-# With cost tracking
-npm run cli -- analyze 0x1234567890abcdef --show-costs --opik-trace
-```
-
-## Architecture
-
-### LangGraph Workflow
-
-```
-Market Analysis Request
-    ↓
-[Market Ingestion] → Fetch market data
-    ↓
-[Memory Retrieval] → Load historical agent signals
-    ↓
-[Parallel Agent Execution] → All agents analyze simultaneously
-    ├─ Breaking News Agent (autonomous tool-calling)
-    ├─ Media Sentiment Agent (autonomous tool-calling)
-    ├─ Polling Intelligence Agent (autonomous tool-calling)
-    ├─ Market Microstructure Agent
-    ├─ Probability Baseline Agent
-    └─ Risk Assessment Agent
-    ↓
-[Thesis Construction] → Build bull and bear theses
-    ↓
-[Cross-Examination] → Adversarial testing
-    ↓
-[Consensus Engine] → Calculate unified probability
-    ↓
-[Recommendation Generation] → Create trade signal
-    ↓
-Trade Recommendation Output
-```
-
-### GraphState Schema
-
-```typescript
-const GraphState = Annotation.Root({
-  // Input
-  conditionId: Annotation<string>,
-  
-  // Market Ingestion
-  mbd: Annotation<MarketBriefingDocument | null>,
-  ingestionError: Annotation<IngestionError | null>,
-  
-  // Memory Context (Agent Memory System)
-  memoryContext: Annotation<Map<string, AgentMemoryContext>>,
-  
-  // Agent Signals
-  agentSignals: Annotation<AgentSignal[]>,
-  agentErrors: Annotation<AgentError[]>,
-  
-  // Thesis Construction
-  bullThesis: Annotation<Thesis | null>,
-  bearThesis: Annotation<Thesis | null>,
-  
-  // Cross-Examination
-  debateRecord: Annotation<DebateRecord | null>,
-  
-  // Consensus
-  consensus: Annotation<ConsensusProbability | null>,
-  
-  // Final Recommendation
-  recommendation: Annotation<TradeRecommendation | null>,
-  
-  // Audit Trail
-  auditLog: Annotation<AuditEntry[]>
-});
-```
-
-## Configuration
-
-### LLM Configuration Modes
-
-#### 1. Multi-Provider Mode (Default - Optimal Quality)
-
-Uses different LLMs for different agents:
-
-```bash
-# .env
+# Pick one provider
+LLM_SINGLE_PROVIDER=openai
 OPENAI_API_KEY=sk-...
-OPENAI_DEFAULT_MODEL=gpt-4-turbo
-
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_DEFAULT_MODEL=claude-3-sonnet-20240229
-
-GOOGLE_API_KEY=...
-GOOGLE_DEFAULT_MODEL=gemini-1.5-flash
+OPENAI_DEFAULT_MODEL=gpt-4o-mini
 ```
 
-**Agent-LLM Mapping:**
-- Market Microstructure → GPT-4-turbo
-- Probability Baseline → Gemini-2.5-flash
-- Risk Assessment → Claude-3-sonnet
+That's it for a basic analysis. Everything else is optional.
 
-**Pros:** Diverse perspectives, better quality
-**Cons:** Higher cost, multiple API keys
-
-#### 2. Single-Provider Mode (Budget-Friendly)
-
-Uses one LLM for all agents:
-
-```bash
-# .env
-LLM_SINGLE_PROVIDER=google
-GOOGLE_API_KEY=...
-GOOGLE_DEFAULT_MODEL=gemini-2.5-flash
-```
-
-**Supported Providers:** openai, anthropic, google, nova
-
-**Cost Comparison (per 100 analyses):**
-- Multi-provider (premium): $10-15
-- Multi-provider (Nova): $0.80-2
-- Single-provider (gpt-4o-mini): $1-2
-- Single-provider (Gemini): $0.60-1
-- Single-provider (Nova Lite): $0.20-0.40
-
-See [LLM Provider Setup Guide](./docs/LLM_PROVIDERS.md) for detailed setup.
-
-### Core Configuration
-
-```bash
-# .env
-
-# Opik Observability (optional)
-OPIK_API_KEY=your_opik_api_key_here
-OPIK_PROJECT_NAME=market-intelligence-engine
-OPIK_TRACK_COSTS=true
-
-# LangGraph
-LANGGRAPH_CHECKPOINTER=memory      # Options: memory, sqlite, postgres
-LANGGRAPH_RECURSION_LIMIT=25
-
-# Agent Configuration
-AGENT_TIMEOUT_MS=10000
-MIN_AGENTS_REQUIRED=2
-
-# NewsData (for autonomous agents)
-NEWSDATA_API_KEY=your_newsdata_api_key_here
-MAX_TOOL_CALLS=5
-TOOL_CACHE_ENABLED=true
-
-# Agent Memory System
-MEMORY_SYSTEM_ENABLED=true
-MEMORY_MAX_SIGNALS_PER_AGENT=3
-MEMORY_QUERY_TIMEOUT_MS=5000
-
-# Timestamps
-ENABLE_HUMAN_READABLE_TIMESTAMPS=true
-TIMESTAMP_TIMEZONE=America/New_York
-
-# Consensus
-MIN_EDGE_THRESHOLD=0.05
-HIGH_DISAGREEMENT_THRESHOLD=0.15
-
-# Remote Workflow Service (optional)
-WORKFLOW_SERVICE_URL=https://your-workflow-service.com/analyze
-DIGITALOCEAN_API_TOKEN=your_api_token_here
-WORKFLOW_SERVICE_TIMEOUT_MS=120000
-```
-
-### Getting API Keys
-
-1. **OpenAI**: https://platform.openai.com/api-keys
-2. **Anthropic**: https://console.anthropic.com/
-3. **Google**: https://ai.google.dev/
-4. **Amazon Nova**: AWS Console → Bedrock
-5. **Opik**: https://www.comet.com/opik
-6. **NewsData**: https://newsdata.io
-
-## Usage
-
-### CLI Commands
+## CLI Usage
 
 ```bash
 # Analyze a market
-npm run cli -- analyze <conditionId> [options]
+npm run cli -- analyze <conditionId>
 
-# Query historical traces
+# With options
+npm run cli -- analyze <conditionId> --debug
+npm run cli -- analyze <conditionId> --single-provider google --model gemini-2.5-flash
+npm run cli -- analyze <conditionId> --show-costs --opik-trace
+
+# Query history
 npm run cli -- history <conditionId>
 
 # Inspect checkpoint state
 npm run cli -- checkpoint <conditionId>
 ```
 
-**Common Options:**
-- `--debug` - Show debug information
-- `--visualize` - Generate workflow visualization
-- `--opik-trace` - Display Opik trace URL
-- `--single-provider <provider>` - Use single LLM provider
-- `--model <model>` - Override default model
-- `--show-costs` - Display LLM costs
-
-### Programmatic Usage
-
-```typescript
-import { analyzeMarket } from './src/workflow';
-
-const result = await analyzeMarket('0x1234567890abcdef');
-
-console.log('Action:', result.recommendation.action);
-console.log('Expected Value:', result.recommendation.expectedValue);
-console.log('Explanation:', result.recommendation.explanation.summary);
-```
-
-### Example Output
+### Example output
 
 ```
 ═══════════════════════════════════════════════════════════════
@@ -290,180 +80,281 @@ EXPLANATION
 Summary: Market is underpricing the probability based on strong
 fundamental catalysts and favorable risk/reward.
 
-Core Thesis: Three major catalysts converge in Q2 2024, creating
-a high-probability path to YES resolution.
-
 Key Catalysts:
 • Policy announcement expected March 15, 2024
 • Historical precedent shows 75% success rate
-• Market sentiment shifting based on polling data
 
 Failure Scenarios:
 • Unexpected regulatory intervention
 • External economic shock
-• Key stakeholder opposition emerges
 ```
 
-## Development
+## Monitor Service
 
-### Project Structure
+The monitor automatically discovers active Polymarket markets and schedules analyses on a configurable interval.
+
+```bash
+npm run monitor:start    # Start background monitoring
+npm run monitor:stop     # Stop monitoring
+npm run monitor:status   # Check status
+npm run monitor:trigger  # Trigger a manual cycle
+```
+
+Requires Supabase credentials in `.env` for persistence.
+
+## Configuration
+
+### LLM Providers
+
+Two modes available:
+
+**Single-provider** (simpler, lower cost):
+```bash
+LLM_SINGLE_PROVIDER=openai          # openai | anthropic | google | nova
+OPENAI_API_KEY=sk-...
+OPENAI_DEFAULT_MODEL=gpt-4o-mini
+```
+
+**Multi-provider** (each agent uses a different LLM):
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_DEFAULT_MODEL=gpt-4-turbo
+
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_DEFAULT_MODEL=claude-3-sonnet-20240229
+
+GOOGLE_API_KEY=...
+GOOGLE_DEFAULT_MODEL=gemini-2.5-flash
+```
+
+Default agent-to-provider mapping in multi-provider mode:
+- Market Microstructure → GPT-4-turbo
+- Probability Baseline → Gemini-2.5-flash
+- Risk Assessment → Claude-3-sonnet
+
+**Amazon Nova (AWS Bedrock):**
+```bash
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+NOVA_MODEL_NAME=global.amazon.nova-2-lite-v1:0
+LLM_SINGLE_PROVIDER=nova            # or use per-agent via NEWS_AGENT_PROVIDER=nova
+```
+
+Cost comparison per 100 analyses:
+| Mode | Estimated cost |
+|------|---------------|
+| Multi-provider (GPT-4 + Claude + Gemini) | $10–15 |
+| Single-provider (gpt-4o-mini) | $1–2 |
+| Single-provider (Gemini 2.5 flash) | $0.60–1 |
+| Single-provider (Nova Lite) | $0.20–0.40 |
+
+See [docs/LLM_PROVIDERS.md](./docs/LLM_PROVIDERS.md) for full provider setup.
+
+### Full .env reference
+
+```bash
+# ── LLM ──────────────────────────────────────────────────────
+LLM_SINGLE_PROVIDER=openai                  # omit for multi-provider mode
+OPENAI_API_KEY=sk-...
+OPENAI_DEFAULT_MODEL=gpt-4o-mini
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_DEFAULT_MODEL=claude-3-sonnet-20240229
+GOOGLE_API_KEY=...
+GOOGLE_DEFAULT_MODEL=gemini-2.5-flash
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+NOVA_MODEL_NAME=global.amazon.nova-2-lite-v1:0
+
+# ── Database ──────────────────────────────────────────────────
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+# ── External APIs ─────────────────────────────────────────────
+NEWSDATA_API_KEY=...                        # for autonomous news agents
+SERPER_API_KEY=...                          # for web research agent
+
+# ── Observability ─────────────────────────────────────────────
+OPIK_API_KEY=...
+OPIK_PROJECT_NAME=market-intelligence-engine
+OPIK_TRACK_COSTS=true
+
+# ── Agent behavior ────────────────────────────────────────────
+AGENT_TIMEOUT_MS=10000
+MIN_AGENTS_REQUIRED=2
+MAX_TOOL_CALLS=5
+TOOL_CACHE_ENABLED=true
+
+# ── Memory system ─────────────────────────────────────────────
+MEMORY_SYSTEM_ENABLED=true
+MEMORY_MAX_SIGNALS_PER_AGENT=3
+MEMORY_QUERY_TIMEOUT_MS=5000
+
+# ── LangGraph ─────────────────────────────────────────────────
+LANGGRAPH_CHECKPOINTER=memory               # memory | sqlite | postgres
+LANGGRAPH_RECURSION_LIMIT=25
+
+# ── Monitor ───────────────────────────────────────────────────
+ANALYSIS_INTERVAL_HOURS=24
+MAX_MARKETS_PER_CYCLE=3
+
+# ── Remote workflow service (optional) ────────────────────────
+# Leave unset to run workflows locally
+WORKFLOW_SERVICE_URL=https://your-doa-service.com/run
+DIGITALOCEAN_API_TOKEN=...
+WORKFLOW_SERVICE_TIMEOUT_MS=120000
+```
+
+### Getting API keys
+
+| Service | Link |
+|---------|------|
+| OpenAI | https://platform.openai.com/api-keys |
+| Anthropic | https://console.anthropic.com |
+| Google AI | https://ai.google.dev |
+| Amazon Nova | AWS Console → Bedrock |
+| Supabase | https://supabase.com → Settings → API |
+| NewsData.io | https://newsdata.io |
+| Serper | https://serper.dev |
+| Opik | https://www.comet.com/opik |
+
+## Architecture
+
+### Workflow
+
+```
+Market Analysis Request
+    ↓
+[Market Ingestion]         fetch live data from Polymarket
+    ↓
+[Memory Retrieval]         load historical agent signals
+    ↓
+[Keyword Extraction]       extract key terms for agent context
+    ↓
+[Dynamic Agent Selection]  activate relevant agents for this market
+    ↓
+[Parallel Agent Execution] all agents analyze simultaneously
+    ├─ Breaking News (autonomous tool-calling)
+    ├─ Media Sentiment (autonomous tool-calling)
+    ├─ Polling Intelligence (autonomous tool-calling)
+    ├─ Web Research (Serper search + scrape)
+    ├─ Market Microstructure
+    ├─ Probability Baseline
+    ├─ Risk Assessment
+    ├─ Event Impact / Catalyst
+    ├─ Historical Pattern
+    ├─ Momentum / Mean Reversion
+    └─ Tail Risk / Narrative Velocity
+    ↓
+[Agent Signal Fusion]      aggregate signals
+    ↓
+[Thesis Construction]      build bull and bear theses
+    ↓
+[Cross-Examination]        adversarial testing of assumptions
+    ↓
+[Consensus Engine]         calculate unified probability estimate
+    ↓
+[Recommendation Generation] produce trade signal with entry/exit zones
+```
+
+### Project structure
 
 ```
 tradewizard-agents/
 ├── src/
-│   ├── nodes/              # LangGraph nodes
+│   ├── nodes/              # LangGraph workflow nodes
 │   │   ├── market-ingestion.ts
 │   │   ├── memory-retrieval.ts
-│   │   ├── agents.ts       # All intelligence agents
+│   │   ├── keyword-extraction.ts
+│   │   ├── dynamic-agent-selection.ts
+│   │   ├── agents.ts
+│   │   ├── autonomous-news-agents.ts
+│   │   ├── autonomous-polling-agent.ts
+│   │   ├── web-research-agent.ts
+│   │   ├── agent-signal-fusion.ts
 │   │   ├── thesis-construction.ts
 │   │   ├── cross-examination.ts
 │   │   ├── consensus-engine.ts
 │   │   └── recommendation-generation.ts
-│   ├── models/             # Data models
+│   ├── tools/              # LangChain tools
+│   │   ├── newsdata-tools.ts
+│   │   ├── polling-tools.ts
+│   │   └── serper-tools.ts
+│   ├── models/             # TypeScript types and state
 │   │   ├── types.ts
 │   │   ├── schemas.ts
 │   │   └── state.ts
-│   ├── tools/              # LangChain tools
-│   │   ├── newsdata-tools.ts
-│   │   └── polymarket-tools.ts
-│   ├── database/           # Persistence layer
+│   ├── database/           # Supabase persistence and memory
 │   │   ├── supabase.ts
 │   │   ├── persistence.ts
 │   │   ├── memory-retrieval.ts
 │   │   └── migrate.ts
-│   ├── utils/              # Utilities
+│   ├── utils/
 │   │   ├── polymarket-client.ts
 │   │   ├── audit-logger.ts
 │   │   ├── timestamp-formatter.ts
 │   │   └── opik-integration.ts
-│   ├── config/             # Configuration
-│   ├── workflow.ts         # LangGraph workflow
-│   ├── cli.ts              # CLI interface
-│   ├── monitor.ts          # Monitoring service
-│   └── index.ts            # Entry point
-├── docs/                   # Documentation
+│   ├── config/
+│   ├── workflow.ts
+│   ├── cli.ts
+│   ├── monitor.ts
+│   └── index.ts
+├── docs/
 ├── .env.example
 ├── package.json
 ├── tsconfig.json
 └── vitest.config.ts
 ```
 
-### Build & Development
+## Development
 
 ```bash
-# Build
-npm run build
-
-# Development mode with hot-reload
-npm run dev
-
-# Linting
-npm run lint
-npm run lint:fix
-
-# Formatting
-npm run format
-npm run format:check
+npm run dev          # hot-reload development mode
+npm run build        # production build
+npm run lint         # ESLint
+npm run lint:fix     # auto-fix lint issues
+npm run format       # Prettier
 ```
 
 ## Testing
 
-### Unit Tests
-
 ```bash
-npm test
-```
-
-Run specific test files:
-```bash
-npm test -- market-ingestion.test.ts
-```
-
-### Property-Based Tests
-
-```bash
-npm test -- *.property.test.ts
-```
-
-Validates correctness properties like:
-- Market data retrieval completeness
-- Agent signal structure validity
-- Consensus probability structure
-- Trade recommendation validity
-
-### Integration Tests
-
-```bash
+npm test                              # all tests
+npm test -- market-ingestion.test.ts  # specific file
+npm test -- *.property.test.ts        # property-based tests
 npm test -- workflow.integration.test.ts
-```
-
-### Test Coverage
-
-```bash
 npm test -- --coverage
+npm run test:e2e                      # end-to-end
 ```
 
-**Coverage Goals:**
-- Unit tests: >80%
-- Property tests: 100% of correctness properties
-- Integration tests: All external API interactions
-
-### End-to-End Testing
-
-```bash
-# Run E2E test suite once
-npm run test:e2e
-
-# Run continuous 48-hour monitoring
-npm run test:e2e:continuous
-```
+LLM-dependent tests have a 30s timeout. See `vitest.config.ts` to adjust.
 
 ## Deployment
 
-### Node.js Deployment
+### Node.js / PM2
 
 ```bash
-# Build
 npm run build
-
-# Set environment variables
-export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
-# ... other variables
-
-# Run
 npm start
 
-# Or use PM2
-npm install -g pm2
-pm2 start dist/index.js --name market-intelligence-engine
+# or with PM2
+pm2 start dist/index.js --name tradewizard-agents
 ```
 
-### Docker Deployment
+### Docker
 
-```dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm ci --only=production
-
-COPY . .
-RUN npm run build
-
-CMD ["npm", "start"]
-```
-
-Build and run:
 ```bash
-docker build -t market-intelligence-engine .
-docker run -d --env-file .env --name market-intelligence-engine market-intelligence-engine
+docker build -t tradewizard-agents .
+docker run -d --env-file .env tradewizard-agents
 ```
 
-### Environment-Specific Configuration
+A `docker-compose.yml` is included for local multi-service setups.
 
-**Development:**
+### Environment presets
+
+Development:
 ```bash
 LOG_LEVEL=debug
 LANGGRAPH_CHECKPOINTER=memory
@@ -471,7 +362,7 @@ LLM_SINGLE_PROVIDER=openai
 OPENAI_DEFAULT_MODEL=gpt-4o-mini
 ```
 
-**Production:**
+Production:
 ```bash
 LOG_LEVEL=info
 LANGGRAPH_CHECKPOINTER=sqlite
@@ -483,89 +374,25 @@ OPIK_TRACK_COSTS=true
 
 | Issue | Solution |
 |-------|----------|
-| No API keys configured | Check `.env` file, verify at least one LLM provider key is set |
-| Market analysis failed | Verify condition ID is valid, check Polymarket API accessibility |
-| Configuration invalid | Verify `.env` format, ensure required fields present |
-| Tests timing out | Increase timeout in `vitest.config.ts`, check network connectivity |
-| LangGraph recursion limit exceeded | Increase `LANGGRAPH_RECURSION_LIMIT` in `.env` |
-| Opik traces not appearing | Verify `OPIK_API_KEY`, check `OPIK_PROJECT_NAME`, ensure network connectivity |
-| Memory system not working | Verify `MEMORY_SYSTEM_ENABLED=true`, check database connection, verify historical signals exist |
-
-### LangGraph Debugging
-
-**Using LangGraph Studio:**
-
-```bash
-npm install -g @langchain/langgraph-studio
-langgraph-studio
-```
-
-**Inspect graph state:**
-
-```bash
-npm run cli -- checkpoint <conditionId> --debug
-```
-
-**Enable debug logging:**
-
-```bash
-# .env
-LOG_LEVEL=debug
-```
-
-### Opik Debugging
-
-1. Access Opik dashboard: https://www.comet.com/opik
-2. Find your trace by market ID (condition ID)
-3. Inspect trace details: execution timeline, LLM inputs/outputs, token usage, costs
-
-**Query traces programmatically:**
-
-```typescript
-import { OpikClient } from 'opik';
-
-const client = new OpikClient({ apiKey: process.env.OPIK_API_KEY });
-const traces = await client.getTraces({
-  projectName: 'market-intelligence-engine',
-  filter: { threadId: '0x1234567890abcdef' }
-});
-```
+| No API keys configured | Verify `.env` has at least one LLM provider key |
+| Market analysis failed | Check condition ID is valid on Polymarket |
+| LangGraph recursion limit | Increase `LANGGRAPH_RECURSION_LIMIT` |
+| Tests timing out | Increase timeout in `vitest.config.ts` |
+| Memory system not working | Set `MEMORY_SYSTEM_ENABLED=true`, verify Supabase connection |
+| Opik traces missing | Verify `OPIK_API_KEY` and `OPIK_PROJECT_NAME` |
+| Monitor not persisting | Verify Supabase credentials and run `npm run migrate` |
 
 ## Documentation
 
-### Core Documentation
-- **[CLI Documentation](./CLI.md)** - Complete CLI reference
-- **[Documentation Hub](./docs/README.md)** - Central documentation index
-- **[Deployment Guide](./docs/DEPLOYMENT.md)** - Production deployment
-- **[Runbook](./docs/RUNBOOK.md)** - Operational procedures
-
-### Feature Documentation
-- **[Autonomous News Agents](./docs/AUTONOMOUS_NEWS_AGENTS.md)** - Tool-calling capabilities
-- **[Agent Memory System](./src/database/MEMORY_SYSTEM_CONFIG.md)** - Closed-loop analysis
-- **[Timestamp Formatting](./src/utils/TIMESTAMP_FORMATTING.md)** - Human-readable timestamps
-- **[Workflow Service Logging](./docs/WORKFLOW_SERVICE_LOGGING.md)** - Remote execution logging
-- **[Database Module](./src/database/README.md)** - Supabase integration
-
-### Integration Guides
-- **[LLM Provider Setup](./docs/LLM_PROVIDERS.md)** - OpenAI, Anthropic, Google, Nova setup
-- **[Opik Integration](./docs/OPIK_GUIDE.md)** - Observability setup
-- **[External Data Sources](./docs/EXTERNAL_DATA_SOURCES.md)** - NewsData.io and Polymarket APIs
-- **[Autonomous Agents Migration](./docs/AUTONOMOUS_AGENTS_MIGRATION.md)** - Migration guide
-
-### Advanced Topics
-- **[Advanced Agent League](./docs/ADVANCED_AGENT_LEAGUE.md)** - Advanced patterns
-- **[Examples](./docs/EXAMPLES.md)** - Code examples
-
-### External Resources
-- **[LangGraph Documentation](https://langchain-ai.github.io/langgraph/)**
-- **[Opik Documentation](https://www.comet.com/docs/opik/)**
-- **[Polymarket API](https://docs.polymarket.com/)**
-- **[fast-check Documentation](https://fast-check.dev/)**
+- [CLI Reference](./CLI.md)
+- [Monitor CLI](./CLI-MONITOR.md)
+- [Deployment Guide](./DEPLOYMENT.md)
+- [LLM Provider Setup](./docs/LLM_PROVIDERS.md)
+- [Autonomous News Agents](./docs/AUTONOMOUS_NEWS_AGENTS.md)
+- [Agent Memory System](./src/database/MEMORY_SYSTEM_CONFIG.md)
+- [Opik Integration](./docs/OPIK_GUIDE.md)
+- [External Data Sources](./docs/EXTERNAL_DATA_SOURCES.md)
 
 ## License
 
 ISC
-
----
-
-**Built with ❤️ using LangGraph and Opik**
